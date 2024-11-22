@@ -1,9 +1,10 @@
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { transport, sendMail } = require('../middlewares/sendMail')
-const { signupSchema, signinSchema } = require("../middlewares/validator"); // Fix typo
+const { signupSchema, signinSchema, acceptCodeSchema } = require("../middlewares/validator"); // Fix typo
 const { doHash, doHashValidation, hmacProcess } = require("../utils/hashing");
 const User = require('../models/usersModel'); // Import User model
+const { errorMonitor } = require('events');
 
 exports.signup = async (req, res) => {
     const { email, password } = req.body;
@@ -162,5 +163,59 @@ exports.sendVerificatinCode = async  (req ,res ) => {
         res.status(400).json({ success:false, message:'Code not sent'})
     } catch (error) {
         console.log(error)
+    }
+};
+
+exports.verifyVerificationCode = async (req,res ) => {
+    const {email, providedCode} = req.body;
+    try {
+        const { error, value }= acceptCodeSchema.validate({ email, providedCode});
+        if(error){
+            return res
+                .status(401)
+                .json({ success: false, message: errorMonitor.details[0].message  });
+        }
+        const codeValue = providedCode.toString()
+        const existingUser =await User.findOne({email}).select("+verificationCode +verifyVerificationCodeValidation");
+
+        if(!existingUser) {
+            return res 
+                .status(401)
+                .json({ success: false, message: 'User does not exist!' });
+        }
+
+        if(existingUser.verified){
+            return res
+                .status(400)
+                .json({ succes: false, message:'you are verified' });
+        }
+
+        if(existingUser.verificatiCode || !existingUser.verificatiCodeValidation){
+            return res
+                .status(400)
+                .json({ succes: false, message:'Something went wwrong with the code' });
+        }
+        
+        if(Date.now() - existingUser.verificatiCodeValidation > 5*60*1000){
+            return res
+            .status(400)
+            json({ succes: false, message:'Code has expired' });  
+        }
+
+        const hashedCodeValue = hmacProcess(codeValue, process.env.HMAC_VERIFICATION_CODE_SECRET)
+
+        if(hashedCodeValue === existingUser.verificatiCode){
+            existingUser.verified = true;
+            existingUser.verificatiCode = undefined;
+            existingUser.verificatiCodeValidation =undefined;
+            await existingUser.save()
+            return res
+            .status(200)
+            .json({ succes: false, message:'unexpected eroor' });
+    
+        }
+
+    } catch (error) {
+        
     }
 }
